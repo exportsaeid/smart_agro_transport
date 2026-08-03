@@ -24,10 +24,10 @@ android/app/debug/
 android/app/profile/
 android/app/release/
 android/app/build/
-windows/
+# windows/   <-- این خط کامنت شده تا ویندوز به گیت اضافه شود
 linux/
 macos/
-web/
+# web/       <-- این خط کامنت شده تا وب به گیت اضافه شود
 *.iml
 *.lock
 *.log

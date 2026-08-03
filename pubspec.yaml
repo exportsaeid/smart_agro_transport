@@ -1,0 +1,61 @@
+name: smart_agro_transport
+description: "Smart Agro Transport"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Google Maps
+  google_maps_flutter: ^2.6.0
+
+  # موقعیت مکانی
+  geolocator: ^11.0.0
+
+  permission_handler: ^11.4.0
+  permission_handler_windows: ^0.2.1
+  flutter_localizations:
+    sdk: flutter
+
+  # مدیریت حالت
+  provider: ^6.1.2
+
+  # دیتابیس
+  sqflite: ^2.3.2
+  sqflite_common_ffi: ^2.3.3  # برای ویندوز و دسکتاپ
+
+  # مسیر فایل‌ها
+  path_provider: ^2.1.2
+  path: ^1.9.0
+
+  # PDF
+  pdf: ^3.10.7
+  printing: ^5.13.1
+
+  # انتخاب فایل
+  file_picker: ^8.0.0
+
+  # فرمت‌دهی
+  intl: ^0.20.2
+
+  # پیام‌ها
+  fluttertoast: ^8.2.4
+
+  # تاریخ شمسی
+  persian_datetime_picker: ^3.2.0
+  local_auth: ^3.0.2
+
+  # حل مشکل دانلود SQLite در دسکتاپ
+  sqlite3_flutter_libs: ^0.6.0+1   # ← این خط رو اضافه کردم
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true

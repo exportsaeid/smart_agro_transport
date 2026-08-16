@@ -41,7 +41,35 @@ class _LoginPageState extends State<LoginPage>
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic));
     _animController.forward();
-    _checkBiometrics();
+    _tryAutoBiometrics();
+  }
+
+  /// ورود خودکار با اثر انگشت فقط اگر قبلاً فعال شده باشد
+  Future<void> _tryAutoBiometrics() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool useBiometrics = prefs.getBool('use_biometrics') ?? false;
+    final String? lastUser = prefs.getString('last_username');
+    if (!useBiometrics || lastUser == null || lastUser.isEmpty) return;
+
+    try {
+      final bool isSupported = await _localAuth.isDeviceSupported();
+      final bool canCheck = await _localAuth.canCheckBiometrics;
+      if (!isSupported || !canCheck) return;
+
+      final bool didAuthenticate = await _localAuth.authenticate(
+        localizedReason: 'لطفاً برای ورود انگشت خود را روی حسگر قرار دهید',
+        options: const AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+        ),
+      );
+
+      if (didAuthenticate && mounted) {
+        _proceedToMain(lastUser);
+      }
+    } catch (_) {
+      // در حالت خودکار خطا را بی‌صدا نادیده می‌گیریم
+    }
   }
 
   @override
@@ -55,21 +83,73 @@ class _LoginPageState extends State<LoginPage>
 
   Future<void> _checkBiometrics() async {
     final prefs = await SharedPreferences.getInstance();
-    final bool useBiometrics = prefs.getBool('use_biometrics') ?? false;
     final String? lastUser = prefs.getString('last_username');
 
-    if (useBiometrics && lastUser != null) {
-      final bool canAuthenticateWithBiometrics =
-          await _localAuth.canCheckBiometrics;
-      if (canAuthenticateWithBiometrics) {
-        final bool didAuthenticate = await _localAuth.authenticate(
-          localizedReason: 'لطفاً برای ورود انگشت خود را روی حسگر قرار دهید',
-          options: const AuthenticationOptions(biometricOnly: true),
+    // حداقل یک‌بار باید با رمز وارد شده باشد
+    if (lastUser == null || lastUser.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'ابتدا یک‌بار با نام کاربری و رمز وارد شوید',
+              style: TextStyle(fontFamily: 'Tahoma'),
+            ),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
         );
+      }
+      return;
+    }
 
-        if (didAuthenticate) {
+    try {
+      final bool isSupported = await _localAuth.isDeviceSupported();
+      final bool canCheck = await _localAuth.canCheckBiometrics;
+      final List<BiometricType> biometrics =
+      await _localAuth.getAvailableBiometrics();
+
+      if (!isSupported || !canCheck || biometrics.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'اثر انگشت / Face ID روی این دستگاه فعال نیست.\nاز تنظیمات گوشی اثر انگشت را ثبت کنید.',
+                style: TextStyle(fontFamily: 'Tahoma'),
+              ),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+        return;
+      }
+
+      final bool didAuthenticate = await _localAuth.authenticate(
+        localizedReason: 'لطفاً برای ورود انگشت خود را روی حسگر قرار دهید',
+        options: const AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+        ),
+      );
+
+      if (didAuthenticate) {
+        await prefs.setBool('use_biometrics', true);
+        if (mounted) {
           _proceedToMain(lastUser);
         }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'خطا در احراز هویت بیومتریک:\n$e',
+              style: const TextStyle(fontFamily: 'Tahoma'),
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
       }
     }
   }
@@ -86,7 +166,8 @@ class _LoginPageState extends State<LoginPage>
     if (username.isEmpty || password.isEmpty) {
       setState(() {
         _isLoading = false;
-        _errorMessage = 'نام کاربری و رمز عبور را وارد کنید\nPlease enter username and password';
+        _errorMessage =
+        'نام کاربری و رمز عبور را وارد کنید\nPlease enter username and password';
       });
       return;
     }
@@ -96,6 +177,7 @@ class _LoginPageState extends State<LoginPage>
     if (user != null) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('last_username', username);
+      await prefs.setBool('use_biometrics', true);
 
       if (await _authRepository.isUsingDefaultPassword(username)) {
         setState(() => _isLoading = false);
@@ -107,7 +189,7 @@ class _LoginPageState extends State<LoginPage>
       setState(() {
         _isLoading = false;
         _errorMessage =
-            'نام کاربری یا رمز عبور اشتباه است\nIncorrect username or password';
+        'نام کاربری یا رمز عبور اشتباه است\nIncorrect username or password';
       });
     }
   }
@@ -115,10 +197,10 @@ class _LoginPageState extends State<LoginPage>
   void _proceedToMain(String username) async {
     if (Platform.isAndroid) {
       final bool isIgnored =
-          await BatteryOptimizationHelper.isIgnoringBatteryOptimizations();
+      await BatteryOptimizationHelper.isIgnoringBatteryOptimizations();
       if (!isIgnored && mounted) {
         final bool result =
-            await BatteryOptimizationHelper.showSimpleBatteryDialog(context);
+        await BatteryOptimizationHelper.showSimpleBatteryDialog(context);
         if (!result && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -170,7 +252,8 @@ class _LoginPageState extends State<LoginPage>
                 children: [
                   const Text(
                     'رمز عبور شما پیش‌فرض است. لطفاً آن را تغییر دهید.\nYour password is default. Please change it.',
-                    style: TextStyle(fontFamily: 'Tahoma', fontSize: 13, height: 1.5),
+                    style:
+                    TextStyle(fontFamily: 'Tahoma', fontSize: 13, height: 1.5),
                   ),
                   const SizedBox(height: 16),
                   TextField(
@@ -215,14 +298,14 @@ class _LoginPageState extends State<LoginPage>
                     if (newPassController.text.length < 3) {
                       setDialogState(() {
                         dialogError =
-                            'رمز باید حداقل ۳ کاراکتر باشد\nPassword must be at least 3 characters';
+                        'رمز باید حداقل ۳ کاراکتر باشد\nPassword must be at least 3 characters';
                       });
                       return;
                     }
                     if (newPassController.text != confirmPassController.text) {
                       setDialogState(() {
                         dialogError =
-                            'رمزها یکسان نیستند\nPasswords do not match';
+                        'رمزها یکسان نیستند\nPasswords do not match';
                       });
                       return;
                     }
@@ -254,7 +337,6 @@ class _LoginPageState extends State<LoginPage>
     return Scaffold(
       body: Stack(
         children: [
-          // ===== پس‌زمینه گرادیان زیبا =====
           Container(
             width: double.infinity,
             height: double.infinity,
@@ -263,17 +345,15 @@ class _LoginPageState extends State<LoginPage>
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  Color(0xFF1B5E20), // سبز تیره
-                  Color(0xFF2E7D32), // سبز اصلی
-                  Color(0xFF43A047), // سبز روشن‌تر
-                  Color(0xFF66BB6A), // سبز ملایم
+                  Color(0xFF1B5E20),
+                  Color(0xFF2E7D32),
+                  Color(0xFF43A047),
+                  Color(0xFF66BB6A),
                 ],
                 stops: [0.0, 0.35, 0.7, 1.0],
               ),
             ),
           ),
-
-          // اشکال تزئینی نرم
           Positioned(
             top: -100,
             left: -80,
@@ -310,13 +390,11 @@ class _LoginPageState extends State<LoginPage>
               ),
             ),
           ),
-
-          // ===== محتوا =====
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                 child: FadeTransition(
                   opacity: _fadeAnim,
                   child: SlideTransition(
@@ -325,7 +403,6 @@ class _LoginPageState extends State<LoginPage>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         const SizedBox(height: 12),
-                        // ===== لوگو =====
                         Container(
                           width: 100,
                           height: 100,
@@ -376,12 +453,9 @@ class _LoginPageState extends State<LoginPage>
                           ),
                         ),
                         const SizedBox(height: 32),
-
-                        // ===== کارت لاگین =====
                         Container(
                           width: size.width > 480 ? 420 : double.infinity,
-                          padding:
-                              const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                          padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(24),
@@ -419,206 +493,191 @@ class _LoginPageState extends State<LoginPage>
                                   ),
                                 ),
                                 const SizedBox(height: 26),
-
-                              // نام کاربری
-                              TextField(
-                                controller: _usernameController,
-                                textInputAction: TextInputAction.next,
-                                onSubmitted: (_) =>
-                                    FocusScope.of(context)
-                                        .requestFocus(_passwordFocus),
-                                style: const TextStyle(fontFamily: 'Tahoma'),
-                                decoration: InputDecoration(
-                                  labelText: 'نام کاربری',
-                                  hintText: 'نام کاربری را وارد کنید',
-                                  prefixIcon: const Icon(Icons.person_outline,
-                                      color: Color(0xFF2E7D32)),
-                                  filled: true,
-                                  fillColor: const Color(0xFFF1F8E9),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 16),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                  enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: BorderSide(
-                                        color: Colors.green.shade100),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(
-                                        color: Color(0xFF2E7D32), width: 1.8),
-                                  ),
-                                  labelStyle: const TextStyle(
-                                      fontFamily: 'Tahoma', fontSize: 14),
-                                  hintStyle: TextStyle(
-                                      fontFamily: 'Tahoma',
-                                      color: Colors.grey[400],
-                                      fontSize: 13),
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-
-                              // رمز عبور
-                              TextField(
-                                controller: _passwordController,
-                                focusNode: _passwordFocus,
-                                obscureText: !_isPasswordVisible,
-                                textInputAction: TextInputAction.done,
-                                onSubmitted: (_) => _handleLogin(),
-                                style: const TextStyle(fontFamily: 'Tahoma'),
-                                decoration: InputDecoration(
-                                  labelText: 'رمز عبور',
-                                  hintText: 'رمز عبور را وارد کنید',
-                                  prefixIcon: const Icon(Icons.lock_outline,
-                                      color: Color(0xFF2E7D32)),
-                                  suffixIcon: IconButton(
-                                    icon: Icon(
-                                      _isPasswordVisible
-                                          ? Icons.visibility_rounded
-                                          : Icons.visibility_off_rounded,
-                                      color: Colors.grey[600],
+                                TextField(
+                                  controller: _usernameController,
+                                  textInputAction: TextInputAction.next,
+                                  onSubmitted: (_) => FocusScope.of(context)
+                                      .requestFocus(_passwordFocus),
+                                  style: const TextStyle(fontFamily: 'Tahoma'),
+                                  decoration: InputDecoration(
+                                    labelText: 'نام کاربری',
+                                    hintText: 'نام کاربری را وارد کنید',
+                                    prefixIcon: const Icon(Icons.person_outline,
+                                        color: Color(0xFF2E7D32)),
+                                    filled: true,
+                                    fillColor: const Color(0xFFF1F8E9),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 16),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide.none,
                                     ),
-                                    onPressed: () {
-                                      setState(() {
-                                        _isPasswordVisible =
-                                            !_isPasswordVisible;
-                                      });
-                                    },
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide:
+                                      BorderSide(color: Colors.green.shade100),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: const BorderSide(
+                                          color: Color(0xFF2E7D32), width: 1.8),
+                                    ),
+                                    labelStyle: const TextStyle(
+                                        fontFamily: 'Tahoma', fontSize: 14),
+                                    hintStyle: TextStyle(
+                                        fontFamily: 'Tahoma',
+                                        color: Colors.grey[400],
+                                        fontSize: 13),
                                   ),
-                                  filled: true,
-                                  fillColor: const Color(0xFFF1F8E9),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 16),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                  enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: BorderSide(
-                                        color: Colors.green.shade100),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(
-                                        color: Color(0xFF2E7D32), width: 1.8),
-                                  ),
-                                  labelStyle: const TextStyle(
-                                      fontFamily: 'Tahoma', fontSize: 14),
-                                  hintStyle: TextStyle(
-                                      fontFamily: 'Tahoma',
-                                      color: Colors.grey[400],
-                                      fontSize: 13),
                                 ),
-                              ),
-
-                              // پیام خطا
-                              if (_errorMessage != null) ...[
-                                const SizedBox(height: 14),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color: Colors.red.shade50,
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                        color: Colors.red.shade200),
+                                const SizedBox(height: 16),
+                                TextField(
+                                  controller: _passwordController,
+                                  focusNode: _passwordFocus,
+                                  obscureText: !_isPasswordVisible,
+                                  textInputAction: TextInputAction.done,
+                                  onSubmitted: (_) => _handleLogin(),
+                                  style: const TextStyle(fontFamily: 'Tahoma'),
+                                  decoration: InputDecoration(
+                                    labelText: 'رمز عبور',
+                                    hintText: 'رمز عبور را وارد کنید',
+                                    prefixIcon: const Icon(Icons.lock_outline,
+                                        color: Color(0xFF2E7D32)),
+                                    suffixIcon: IconButton(
+                                      icon: Icon(
+                                        _isPasswordVisible
+                                            ? Icons.visibility_rounded
+                                            : Icons.visibility_off_rounded,
+                                        color: Colors.grey[600],
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _isPasswordVisible =
+                                          !_isPasswordVisible;
+                                        });
+                                      },
+                                    ),
+                                    filled: true,
+                                    fillColor: const Color(0xFFF1F8E9),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 16),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide:
+                                      BorderSide(color: Colors.green.shade100),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: const BorderSide(
+                                          color: Color(0xFF2E7D32), width: 1.8),
+                                    ),
+                                    labelStyle: const TextStyle(
+                                        fontFamily: 'Tahoma', fontSize: 14),
+                                    hintStyle: TextStyle(
+                                        fontFamily: 'Tahoma',
+                                        color: Colors.grey[400],
+                                        fontSize: 13),
                                   ),
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.error_outline,
-                                          color: Colors.red.shade700, size: 20),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          _errorMessage!,
-                                          style: TextStyle(
-                                            color: Colors.red.shade800,
-                                            fontSize: 12.5,
-                                            fontFamily: 'Tahoma',
-                                            height: 1.4,
+                                ),
+                                if (_errorMessage != null) ...[
+                                  const SizedBox(height: 14),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 10),
+                                    decoration: BoxDecoration(
+                                      color: Colors.red.shade50,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border:
+                                      Border.all(color: Colors.red.shade200),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.error_outline,
+                                            color: Colors.red.shade700, size: 20),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            _errorMessage!,
+                                            style: TextStyle(
+                                              color: Colors.red.shade800,
+                                              fontSize: 12.5,
+                                              fontFamily: 'Tahoma',
+                                              height: 1.4,
+                                            ),
                                           ),
                                         ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 24),
+                                SizedBox(
+                                  height: 54,
+                                  child: ElevatedButton(
+                                    onPressed: _isLoading ? null : _handleLogin,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF2E7D32),
+                                      disabledBackgroundColor:
+                                      const Color(0xFF81C784),
+                                      elevation: 4,
+                                      shadowColor: const Color(0xFF2E7D32)
+                                          .withOpacity(0.45),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
                                       ),
-                                    ],
+                                    ),
+                                    child: _isLoading
+                                        ? const SizedBox(
+                                      width: 26,
+                                      height: 26,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2.5,
+                                      ),
+                                    )
+                                        : const Row(
+                                      mainAxisAlignment:
+                                      MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.login_rounded,
+                                            color: Colors.white, size: 22),
+                                        SizedBox(width: 8),
+                                        Text(
+                                          'ورود به برنامه',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontFamily: 'Tahoma',
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                TextButton.icon(
+                                  onPressed: _checkBiometrics,
+                                  icon: Icon(Icons.fingerprint,
+                                      color: Colors.green[700], size: 22),
+                                  label: Text(
+                                    'ورود با اثر انگشت',
+                                    style: TextStyle(
+                                      color: Colors.green[700],
+                                      fontFamily: 'Tahoma',
+                                      fontSize: 13,
+                                    ),
                                   ),
                                 ),
                               ],
-
-                              const SizedBox(height: 24),
-
-                              // دکمه ورود
-                              SizedBox(
-                                height: 54,
-                                child: ElevatedButton(
-                                  onPressed:
-                                      _isLoading ? null : _handleLogin,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF2E7D32),
-                                    disabledBackgroundColor:
-                                        const Color(0xFF81C784),
-                                    elevation: 4,
-                                    shadowColor:
-                                        const Color(0xFF2E7D32).withOpacity(0.45),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                  ),
-                                  child: _isLoading
-                                      ? const SizedBox(
-                                          width: 26,
-                                          height: 26,
-                                          child: CircularProgressIndicator(
-                                            color: Colors.white,
-                                            strokeWidth: 2.5,
-                                          ),
-                                        )
-                                      : const Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            Icon(Icons.login_rounded,
-                                                color: Colors.white, size: 22),
-                                            SizedBox(width: 8),
-                                            Text(
-                                              'ورود به برنامه',
-                                              style: TextStyle(
-                                                fontSize: 16,
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                                fontFamily: 'Tahoma',
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                ),
-                              ),
-
-                              const SizedBox(height: 16),
-
-                              // اثر انگشت
-                              TextButton.icon(
-                                onPressed: _checkBiometrics,
-                                icon: Icon(Icons.fingerprint,
-                                    color: Colors.green[700], size: 22),
-                                label: Text(
-                                  'ورود با اثر انگشت',
-                                  style: TextStyle(
-                                    color: Colors.green[700],
-                                    fontFamily: 'Tahoma',
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
-                      ),
-
-                      const SizedBox(height: 28),
+                        const SizedBox(height: 28),
                         Text(
                           'نسخه ۱.۰.۰',
                           style: TextStyle(
